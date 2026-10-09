@@ -1,7 +1,7 @@
 # Declaración de uso de inteligencia artificial
 
 ## Herramientas utilizadas
-- **Claude Code** (aplicación de escritorio de Anthropic), modelo **Claude Opus 5.5**. Se usó como herramienta de apoyo durante la realización del laboratorio, con acceso al repositorio local y siempre bajo la dirección del estudiante.
+- **Claude ** (aplicación de escritorio de Anthropic), modelo **Claude Opus 5.5**. Se usó como herramienta de apoyo durante la realización del laboratorio, siempre bajo la dirección del estudiante.
 - No se usaron otras herramientas de IA en este laboratorio.
 
 ## Propósito de cada uso
@@ -14,8 +14,6 @@ La herramienta actuó como soporte en las siguientes tareas, cuya planificación
 | Implementar los paneles no seleccionados (sección 7) | Asistencia en la modificación de `scripts/train_ae_vae.py`: panel de 16 ejemplos de prueba elegidos con semilla 42 y con etiquetas de clase, panel de vecinos más cercanos (`reports/nearest_neighbors.png`) y métricas ampliadas en `training_metrics.json` |
 | Verificar la ejecución | Apoyo para volver a entrenar con los parámetros del manual, ejecutar las pruebas (`pytest`, 4 superadas) y `ruff` |
 | Elaborar la documentación | Borradores del cierre interpretativo (`README.md`), de `MODEL_CARD.md` y de esta declaración, revisados y aprobados por el estudiante |
-| Documentar el hardware | Consulta del modelo de CPU y la RAM del equipo para el Model Card |
-| Comprobar el cumplimiento | Contraste de cada sección del manual U03.LAB10 con el estado del proyecto, incluida una simulación (`git add --dry-run`) de los archivos que se versionarían |
 
 ## Prompts o decisiones relevantes
 - El laboratorio se abordó de forma incremental, una sección del manual a la vez. Para cada una, el asistente planteaba una propuesta y el estudiante determinaba si se ejecutaba, se ajustaba o se descartaba.
@@ -29,13 +27,16 @@ La herramienta actuó como soporte en las siguientes tareas, cuya planificación
 - `requirements-cloud.txt` generado por el estudiante con el comando del manual.
 - Ejecución local de la aplicación de Streamlit: verificada por el estudiante. La app abre en `localhost:8501`, carga el decoder y genera imágenes desde el espacio latente.
 - Revisión de los paneles, las cifras y las interpretaciones del README y del Model Card: cada documento se presentó primero como propuesta y el estudiante lo revisó y aprobó antes de incorporarlo. Las cifras proceden del log de entrenamiento del estudiante y de `reports/training_metrics.json`.
-- Validación final del proyecto frente a las 10 secciones del manual U03.LAB10, solicitada por el estudiante.
+- Validación final del proyecto frente a las 10 secciones del manual U03.LAB10 y la rúbrica del Ejercicio 06, solicitada por el estudiante.
+- Notebook ejecutado de principio a fin sin errores; reprodujo las mismas pérdidas que las ejecuciones desde la terminal (val_loss 0.3071, reconstrucción 267.35, KL 6.26).
 
 ## Cambios realizados sobre resultados generados
-- Los aportes de la herramienta se incorporaron después de que el estudiante los revisara, sin ediciones manuales posteriores. El estudiante orientó y acotó esos aportes de la siguiente forma:
+- Los aportes de la herramienta se incorporaron después de que el estudiante los revisara. El estudiante orientó, acotó y, en el caso de esta declaración, editó directamente esos aportes:
   - Decidió que el cierre interpretativo se ubicara en `README.md`.
   - Solicitó incorporar al Model Card los datos reales de hardware de su equipo.
   - Aportó la salida de consola del entrenamiento y la captura de la aplicación como evidencia.
+- **Corrección de reproducibilidad:** al ejecutar el notebook dos veces en el mismo kernel de VS Code, el AE obtuvo val_loss 0.3093 en lugar de 0.3071, porque las semillas solo se fijaban al importar el script. Se movieron al inicio de `main()` (`tf.keras.utils.set_random_seed`) y se activó `tf.config.experimental.enable_op_determinism()`; dos ejecuciones consecutivas en el mismo proceso dieron resultados idénticos a los documentados. El notebook además recarga el script (`importlib.reload`) para usar siempre su versión actual.
+- **Corrección derivada de la evidencia:** la expectativa inicial era que las muestras generadas estarían más lejos del entrenamiento que las imágenes reales. El notebook mostró lo contrario (mediana 2.20 frente a 3.72), por lo que la interpretación se corrigió: la cercanía se explica por la borrosidad de las muestras y la naturaleza de la distancia por píxeles, no por copia.
 
 ## Responsabilidad asumida
 El estudiante es el autor del trabajo y asume la responsabilidad total del contenido entregado. La herramienta de IA se utilizó exclusivamente como soporte para el análisis, el código y la redacción, sin sustituir su criterio ni sus decisiones. Las interpretaciones, cifras y conclusiones fueron revisadas frente a la evidencia del proyecto (log de entrenamiento, paneles y métricas). Las limitaciones declaradas en el Model Card, en especial que los datos sintéticos no garantizan privacidad, se asumen como parte del trabajo.
