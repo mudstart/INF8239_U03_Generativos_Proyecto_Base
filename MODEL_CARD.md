@@ -76,4 +76,4 @@
 - Ambos modelos siguen mejorando en la última época: el early stopping no llega a activarse y más épocas podrían mejorar la reconstrucción.
 - El análisis de vecinos por píxeles es una medida limitada.
 - **Los datos sintéticos no garantizan privacidad, originalidad ni ausencia de sesgo.** Cualquier uso fuera del ámbito académico requiere revisión humana.
-- `models/*.keras` está en `.gitignore`: un despliegue desde Git no incluiría el decoder.
+- Los modelos entrenados se versionan en Git (`models/autoencoder.keras` y `models/decoder.keras`), por lo que un despliegue desde el repositorio incluye el decoder que usa la aplicación sin reentrenar. Si se cambia el entrenamiento, hay que regenerarlos y volver a versionarlos.
