@@ -14,6 +14,7 @@ from inf8239_u03_gen.data import normalize_images, validate_images
 from inf8239_u03_gen.evaluation import (
     diversity_ratio,
     kl_per_dimension,
+    mean_ssim,
     per_pixel_metrics,
 )
 from inf8239_u03_gen.models import build_autoencoder, build_encoder_decoder
@@ -39,22 +40,32 @@ class VAE(tf.keras.Model):
     def metrics(self):
         return [self.loss_tracker, self.reconstruction_tracker, self.kl_tracker]
 
-    def train_step(self, data):
-        images = data[0] if isinstance(data, tuple) else data
-        with tf.GradientTape() as tape:
-            mean, log_variance = self.encoder(images, training=True)
-            epsilon = tf.random.normal(tf.shape(mean))
-            latent = mean + tf.exp(0.5 * log_variance) * epsilon
-            reconstruction = self.decoder(latent, training=True)
-            reconstruction_loss = tf.reduce_mean(tf.reduce_sum(tf.keras.losses.binary_crossentropy(images, reconstruction), axis=(1, 2)))
-            kl_loss = -0.5 * tf.reduce_mean(tf.reduce_sum(1 + log_variance - tf.square(mean) - tf.exp(log_variance), axis=1))
-            total_loss = reconstruction_loss + kl_loss
-        gradients = tape.gradient(total_loss, self.trainable_weights)
-        self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
+    def compute_losses(self, images, training):
+        mean, log_variance = self.encoder(images, training=training)
+        epsilon = tf.random.normal(tf.shape(mean))
+        latent = mean + tf.exp(0.5 * log_variance) * epsilon
+        reconstruction = self.decoder(latent, training=training)
+        reconstruction_loss = tf.reduce_mean(tf.reduce_sum(tf.keras.losses.binary_crossentropy(images, reconstruction), axis=(1, 2)))
+        kl_loss = -0.5 * tf.reduce_mean(tf.reduce_sum(1 + log_variance - tf.square(mean) - tf.exp(log_variance), axis=1))
+        return reconstruction_loss + kl_loss, reconstruction_loss, kl_loss
+
+    def update_trackers(self, total_loss, reconstruction_loss, kl_loss):
         self.loss_tracker.update_state(total_loss)
         self.reconstruction_tracker.update_state(reconstruction_loss)
         self.kl_tracker.update_state(kl_loss)
         return {metric.name: metric.result() for metric in self.metrics}
+
+    def train_step(self, data):
+        images = data[0] if isinstance(data, tuple) else data
+        with tf.GradientTape() as tape:
+            total_loss, reconstruction_loss, kl_loss = self.compute_losses(images, training=True)
+        gradients = tape.gradient(total_loss, self.trainable_weights)
+        self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
+        return self.update_trackers(total_loss, reconstruction_loss, kl_loss)
+
+    def test_step(self, data):
+        images = data[0] if isinstance(data, tuple) else data
+        return self.update_trackers(*self.compute_losses(images, training=False))
 
 
 def image_panel(path: Path, originals, labels, ae_reconstructed, vae_reconstructed, generated):
@@ -99,10 +110,11 @@ def loss_curves(path: Path, history_ae, history_vae):
     axes[0].set(title="AE · BCE por píxel", xlabel="época")
     axes[0].legend()
     epochs_vae = range(1, len(history_vae["loss"]) + 1)
-    axes[1].plot(epochs_vae, history_vae["reconstruction"], marker="o", color="tab:green")
-    axes[1].set(title="VAE · reconstrucción (BCE sumada)", xlabel="época")
-    axes[2].plot(epochs_vae, history_vae["kl"], marker="o", color="tab:red")
-    axes[2].set(title="VAE · KL", xlabel="época")
+    for axis, key, title in [(axes[1], "reconstruction", "VAE · reconstrucción (BCE sumada)"), (axes[2], "kl", "VAE · KL")]:
+        axis.plot(epochs_vae, history_vae[key], marker="o", label="entrenamiento")
+        axis.plot(epochs_vae, history_vae[f"val_{key}"], marker="o", label="validación")
+        axis.set(title=title, xlabel="época")
+        axis.legend()
     figure.tight_layout()
     figure.savefig(path, dpi=170)
     plt.close(figure)
@@ -138,8 +150,10 @@ def results_table(path: Path, metrics):
     rows = [
         ("BCE/píxel · prueba", f"{fidelity['autoencoder']['bce']:.4f}", f"{fidelity['vae']['bce']:.4f}"),
         ("MSE/píxel · prueba", f"{fidelity['autoencoder']['mse']:.4f}", f"{fidelity['vae']['mse']:.4f}"),
-        ("Mejor val_loss (BCE/píxel)", f"{metrics['ae_best_val_loss']:.4f}", "— (sin validación)"),
-        ("KL final (entrenamiento)", "—", f"{metrics['vae_final_kl']:.2f}"),
+        ("SSIM · prueba (1 = idéntica)", f"{fidelity['autoencoder']['ssim']:.4f}", f"{fidelity['vae']['ssim']:.4f}"),
+        ("Mejor val_loss (época)", f"{metrics['ae_best_val_loss']:.4f} BCE/píxel ({metrics['ae_best_epoch']})",
+         f"{metrics['vae_best_val_loss']:.2f} BCE sumada + KL ({metrics['vae_best_epoch']})"),
+        ("KL en validación (mejor época)", "—", f"{metrics['vae_best_val_kl']:.2f}"),
         ("Genera desde N(0, I)", "No", "Sí"),
         ("Mediana dist. vecino (muestras / prueba real)", "—",
          f"{np.median(metrics['nearest_neighbor_distances']):.2f} / {np.median(metrics['test_reference_distances']):.2f}"),
@@ -181,7 +195,8 @@ def main(argv=None):
     vae = VAE(encoder, decoder)
     vae.compile(optimizer="adam")
     start = perf_counter()
-    history_vae = vae.fit(x_train, epochs=args.epochs_vae, batch_size=256, verbose=2)
+    history_vae = vae.fit(x_train, validation_split=0.1, epochs=args.epochs_vae, batch_size=256,
+                          callbacks=[tf.keras.callbacks.EarlyStopping(patience=2, restore_best_weights=True)], verbose=2)
     vae_seconds = perf_counter() - start
     history_ae, history_vae = history_ae.history, history_vae.history
     loss_curves(reports / "loss_curves.png", history_ae, history_vae)
@@ -189,7 +204,7 @@ def main(argv=None):
     panel_indices = np.sort(np.random.default_rng(SEED).choice(len(x_test), PANEL_SIZE, replace=False))
     originals = x_test[panel_indices]
     ae_reconstructed = autoencoder.predict(originals, verbose=0)
-    mean, log_variance = encoder.predict(originals, verbose=0)
+    mean, _ = encoder.predict(originals, verbose=0)
     vae_reconstructed = decoder.predict(mean, verbose=0)
     generated = decoder.predict(np.random.default_rng(SEED).normal(size=(PANEL_SIZE, 2)), verbose=0)
     image_panel(reports / "ae_vae_panel.png", originals, y_test[panel_indices],
@@ -226,14 +241,18 @@ def main(argv=None):
     metrics = {"ae_train_seconds": ae_seconds, "vae_train_seconds": vae_seconds,
                "ae_parameters": autoencoder.count_params(), "encoder_parameters": encoder.count_params(),
                "decoder_parameters": decoder.count_params(),
-               "partitions": {"train": len(x_train), "ae_validation_fraction": 0.1, "test": len(x_test)},
+               "partitions": {"train": len(x_train), "validation_fraction": 0.1, "test": len(x_test)},
                "ae_best_val_loss": min(history_ae["val_loss"]),
                "ae_best_epoch": int(np.argmin(history_ae["val_loss"])) + 1,
+               "vae_best_val_loss": min(history_vae["val_loss"]),
+               "vae_best_epoch": int(np.argmin(history_vae["val_loss"])) + 1,
+               "vae_best_val_reconstruction": history_vae["val_reconstruction"][int(np.argmin(history_vae["val_loss"]))],
+               "vae_best_val_kl": history_vae["val_kl"][int(np.argmin(history_vae["val_loss"]))],
                "vae_final_reconstruction": history_vae["reconstruction"][-1],
                "vae_final_kl": history_vae["kl"][-1],
                "loss_history": {"autoencoder": history_ae, "vae": history_vae},
-               "test_fidelity": {"autoencoder": per_pixel_metrics(x_test, ae_test),
-                                 "vae": per_pixel_metrics(x_test, vae_test)},
+               "test_fidelity": {"autoencoder": {**per_pixel_metrics(x_test, ae_test), "ssim": mean_ssim(tf, x_test, ae_test)},
+                                 "vae": {**per_pixel_metrics(x_test, vae_test), "ssim": mean_ssim(tf, x_test, vae_test)}},
                "vae_test_kl_per_dimension": kl_per_dimension(test_mean, test_log_variance).round(4).tolist(),
                "per_class_mse": per_class_mse,
                "panel_test_indices": panel_indices.tolist(),
@@ -246,7 +265,7 @@ def main(argv=None):
     metrics = json.loads(json.dumps(metrics, default=float))
     (reports / "training_metrics.json").write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
     results_table(reports / "results_table.md", metrics)
-    summary = {key: metrics[key] for key in ["ae_train_seconds", "vae_train_seconds", "ae_best_val_loss", "test_fidelity", "diversity"]}
+    summary = {key: metrics[key] for key in ["ae_train_seconds", "vae_train_seconds", "ae_best_val_loss", "vae_best_val_loss", "test_fidelity", "diversity"]}
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 

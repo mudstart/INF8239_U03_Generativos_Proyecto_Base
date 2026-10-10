@@ -11,6 +11,13 @@ def per_pixel_metrics(originals: np.ndarray, reconstructed: np.ndarray) -> dict[
     return {"bce": float(bce), "mse": float(mse)}
 
 
+def mean_ssim(tf, originals: np.ndarray, reconstructed: np.ndarray, batch_size: int = 1000) -> float:
+    scores = [tf.image.ssim(tf.constant(originals[start:start + batch_size], tf.float32),
+                            tf.constant(reconstructed[start:start + batch_size], tf.float32), max_val=1.0).numpy()
+              for start in range(0, len(originals), batch_size)]
+    return float(np.concatenate(scores).mean())
+
+
 def kl_per_dimension(mean: np.ndarray, log_variance: np.ndarray) -> np.ndarray:
     return -0.5 * np.mean(1 + log_variance - mean**2 - np.exp(log_variance), axis=0)
 
